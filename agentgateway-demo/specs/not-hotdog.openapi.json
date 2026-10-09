@@ -1,0 +1,52 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Not Hotdog API",
+    "version": "1.0.0",
+    "description": "Jian-Yang's Not Hotdog classifier as a plain REST API (no MCP). agentgateway turns each operation below into an MCP tool."
+  },
+  "servers": [{"url": "http://localhost:8000"}],
+  "paths": {
+    "/hotdog-api/classify": {
+      "get": {
+        "operationId": "classify",
+        "summary": "Tell whether a food is a hotdog",
+        "parameters": [{
+          "name": "food", "in": "query", "required": true,
+          "description": "The food to classify, e.g. 'hotdog' or 'pizza'",
+          "schema": {"type": "string"}
+        }],
+        "responses": {
+          "200": {
+            "description": "The verdict",
+            "content": {"application/json": {"schema": {
+              "type": "object",
+              "properties": {
+                "food": {"type": "string"},
+                "verdict": {"type": "string", "enum": ["hotdog", "not hotdog"]}
+              }
+            }}}
+          }
+        }
+      }
+    },
+    "/hotdog-api/stats": {
+      "get": {
+        "operationId": "stats",
+        "summary": "How many foods have been classified so far",
+        "responses": {
+          "200": {
+            "description": "Counts",
+            "content": {"application/json": {"schema": {
+              "type": "object",
+              "properties": {
+                "hotdog": {"type": "integer"},
+                "not_hotdog": {"type": "integer"}
+              }
+            }}}
+          }
+        }
+      }
+    }
+  }
+}

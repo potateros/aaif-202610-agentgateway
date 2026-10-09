@@ -1,0 +1,39 @@
+# Pied Piper demo backends. The gateway itself is the native agentgateway on the
+# host (reads ~/.config/agentgateway/config.yaml); `make up` starts these and
+# installs the rendered config. Ports are published on localhost only.
+name: agentgateway-demo
+
+services:
+  # Pied Piper's fake git repo, as an MCP server. Writes into ./hotdog-app.
+  repo-mcp:
+    build: ./servers
+    image: agentgateway-demo-servers:local
+    restart: unless-stopped
+    command: ["python", "repo_mcp.py"]
+    environment: { PORT: "8003", REPO_DIR: /data }
+    ports: ["127.0.0.1:14003:8003"]
+    volumes: ["./hotdog-app:/data"]
+
+  # One-off helper for key generation, so the host needs no Python packages.
+  tools:
+    build: ./servers
+    image: agentgateway-demo-servers:local
+    restart: "no"
+    profiles: ["tools"]
+    working_dir: /work
+    volumes: [".:/work"]
+    entrypoint: ["python"]
+
+  # The Pied Piper page, the A2A agents and the Not Hotdog REST API. Code is mounted, not baked in.
+  app:
+    build: ./app
+    image: agentgateway-demo-app:local
+    restart: unless-stopped
+    working_dir: /work
+    volumes: [".:/work:ro"]
+    environment:
+      GATEWAY_URL: http://host.docker.internal:4000
+      PYTHONPATH: /work/scripts:/work
+    command: ["uvicorn", "app.server:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports: ["127.0.0.1:8000:8000"]
+    extra_hosts: ["host.docker.internal:host-gateway"]

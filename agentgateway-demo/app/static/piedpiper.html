@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pied Piper · Not Hotdog sprint</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #f6f7fb; --card: #ffffff; --ink: #14161f; --muted: #5d6475; --line: #e3e6ee;
+    --accent: #5b3fd9; --red: #d92d20; --red-bg: #fff1f0; --amber: #b54708; --amber-bg: #fff7e6;
+    --green: #067647; --green-bg: #ecfdf3;
+    --llm: #6941c6; --mcp: #0e7c86; --a2a: #1d4ed8;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 18px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; height: 100vh;
+  }
+  header { padding: 18px 24px 12px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  header .titles { flex: 1; min-width: 260px; }
+  h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
+  .sub { margin-top: 6px; color: var(--ink); font-size: 19px; line-height: 1.6; }
+  .sub b { color: var(--ink); }
+  button#go {
+    font: inherit; font-size: 20px; font-weight: 700; color: #fff; background: var(--accent);
+    border: 0; border-radius: 12px; padding: 12px 24px; cursor: pointer;
+  }
+  button#go:disabled { background: #e8e5f7; color: var(--accent); cursor: default; }
+  button#go:disabled::before { content: "● "; animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .2; } }
+
+  /* What agentgateway checks: lights up as the sprint hits each one. */
+  .checks { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; padding: 0 24px 12px; }
+  .check { background: var(--card); border: 2px solid var(--line); border-radius: 12px; padding: 10px 12px; transition: all .3s; }
+  .check .t { font-weight: 700; font-size: 17px; display: flex; justify-content: space-between; }
+  .check .d { color: var(--muted); font-size: 14px; }
+  .check .n { color: #fff; background: var(--red); border-radius: 999px; min-width: 26px; height: 26px; padding: 0 7px;
+              font-size: 16px; font-weight: 800; visibility: hidden; display: inline-flex; align-items: center;
+              justify-content: center; flex: none; margin-left: 6px; }
+  .check.hit { border-color: var(--red); }
+  .check.hit .n { visibility: visible; }
+  .check.ping { animation: ping .8s ease-out 2; }
+  @keyframes ping { 0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(217,45,32,.5); }
+                    50% { transform: scale(1.06); box-shadow: 0 0 0 10px rgba(217,45,32,0); } 100% { transform: scale(1); } }
+
+  .banner { margin: 0 24px 10px; padding: 12px 16px; border-radius: 12px; font-weight: 600; display: none; }
+  .banner.show { display: block; }
+  #down { background: #fef0c7; border: 2px solid #f79009; color: #7a2e0e; font-size: 16px; padding: 8px 14px; }
+  #down small { color: #93370d; font-weight: 400; }
+  #err { background: var(--red-bg); border: 2px solid var(--red); color: var(--red); }
+
+  /* The transcript. */
+  #feed { flex: 1; overflow-y: auto; padding: 4px 24px 24px; scroll-padding-top: 8px; }
+  #feed > .item, #feed > .empty { max-width: 1000px; }
+  /* Room below the last item, so a new chapter can always scroll to the top. */
+  #feed.running::after { content: ""; display: block; height: 75vh; }
+  .empty { color: var(--muted); text-align: center; margin: 14vh auto 0; font-size: 20px; }
+  .empty .flow { font-size: 26px; font-weight: 700; color: var(--ink); margin-bottom: 14px; }
+  .empty .flow b { color: var(--accent); }
+  .item { margin: 8px 0; animation: pop .25s ease-out; }
+  @keyframes pop { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  .chapter { margin: 22px 0 10px; font-size: 22px; font-weight: 800; display: flex; align-items: center; gap: 10px; }
+  .chapter .num { background: var(--ink); color: #fff; border-radius: 50%; width: 32px; height: 32px;
+                  display: inline-flex; align-items: center; justify-content: center; font-size: 17px; flex: none; }
+  .chapter::after { content: ""; flex: 1; height: 2px; background: var(--line); }
+
+  .row { display: flex; gap: 12px; align-items: flex-start; }
+  .av { width: 44px; height: 44px; border-radius: 50%; background: var(--card); border: 2px solid var(--line);
+        display: flex; align-items: center; justify-content: center; font-size: 26px; flex: none; }
+  .body { flex: 1; min-width: 0; }
+  .who { font-weight: 700; font-size: 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .bubble { background: var(--card); border: 1px solid var(--line); border-radius: 4px 14px 14px 14px;
+            padding: 10px 14px; margin-top: 3px; font-size: 21px; display: inline-block; max-width: 100%; }
+  .typing .bubble { color: var(--muted); font-style: italic; font-size: 18px; }
+
+  .tag { font-size: 14px; font-weight: 700; border-radius: 6px; padding: 2px 9px; color: #fff; white-space: nowrap; }
+  .tag.LLM { background: var(--llm); } .tag.MCP { background: var(--mcp); } .tag.A2A { background: var(--a2a); }
+  .via { font-size: 14px; font-weight: 700; color: var(--mcp); border: 1.5px solid var(--mcp); border-radius: 6px; padding: 0 7px; }
+  .key { font: 600 16px ui-monospace, Menlo, monospace; color: var(--ink); background: #fff;
+         border: 1px solid #c9cedb; border-radius: 6px; padding: 1px 8px; }
+
+  .line { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 6px 0 6px 56px; color: var(--muted); font-size: 18px; }
+  .line.ok { color: var(--green); font-weight: 600; }
+  .line .msg { color: var(--ink); }
+  .try { padding: 6px 0 6px 56px; font-size: 20px; font-style: italic; }
+  .try::before { content: "😈 "; font-style: normal; }
+
+  .gw { margin: 10px 0 10px 56px; border-radius: 14px; padding: 12px 16px; border: 2px solid; }
+  .gw.blocked { background: var(--red-bg); border-color: var(--red); }
+  .gw.masked { background: var(--amber-bg); border-color: var(--amber); }
+  .gw .head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-weight: 800; font-size: 19px; }
+  .gw .head .feat { font-size: 22px; }
+  .gw.blocked .head { color: var(--red); } .gw.masked .head { color: var(--amber); }
+  .pill { background: var(--red); color: #fff; border-radius: 8px; padding: 1px 9px; font-size: 15px; }
+  .gw.masked .pill { background: var(--amber); }
+  .gw .hint { margin-top: 6px; font-size: 16px; color: var(--ink); }
+  .gw .feature { margin-top: 6px; font-size: 17px; color: var(--ink); }
+  .gw .feature code { font: 14px ui-monospace, Menlo, monospace; color: var(--muted); }
+  .done .feats { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .done .feats span { background: #fff; border: 1px solid #b7e4c7; border-radius: 8px; padding: 2px 9px; font-size: 15px; }
+  .gw .text { margin-top: 4px; font-size: 20px; color: var(--ink); }
+  .gw .detail { margin-top: 4px; font: 15px ui-monospace, Menlo, monospace; color: var(--muted);
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .done { margin: 22px 0 8px; background: var(--green-bg); border: 2px solid var(--green); border-radius: 14px; padding: 16px 18px; }
+  .done .big { font-size: 24px; font-weight: 800; color: var(--green); }
+  .done .files { margin-top: 6px; font: 16px ui-monospace, Menlo, monospace; color: var(--ink); }
+  .done .where { margin-top: 8px; color: var(--ink); font-size: 18px; }
+
+  @media (max-width: 900px) {
+    .check .d { display: none; }
+    .check .t { font-size: 16px; }
+  }
+  @media (max-width: 760px) {
+    body { font-size: 16px; }
+    h1 { font-size: 24px; }
+    .bubble, .gw .text, .try { font-size: 18px; }
+    .line, .try, .gw { margin-left: 0; padding-left: 0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="titles">
+    <h1>🌭 Pied Piper builds Not Hotdog</h1>
+    <div class="sub">Five AI agents. Every model call <span class="tag LLM">LLM</span>, tool call <span class="tag MCP">MCP</span>
+      and agent-to-agent message <span class="tag A2A">A2A</span> goes through <b>agentgateway</b>.</div>
+  </div>
+  <button id="go">▶ Start sprint</button>
+</header>
+
+<div class="checks" id="checks"></div>
+<div class="banner" id="down"></div>
+<div class="banner" id="err"></div>
+
+<main id="feed"></main>
+
+<script>
+const PEOPLE = {
+  richard: ["Richard", "😰"], gilfoyle: ["Gilfoyle", "😑"], dinesh: ["Dinesh", "🤓"],
+  jared: ["Jared", "🥹"], erlich: ["Erlich", "🧔"], hooli: ["Hooli", "🏢"],
+};
+const CHECKS = [
+  ["Identity", "Who is calling?"],
+  ["Permissions", "What may they do?"],
+  ["Guardrails", "What do they say?"],
+  ["Rate limits", "How often?"],
+  ["Budgets", "How much?"],
+];
+const $ = (s) => document.querySelector(s);
+const feed = $("#feed");
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const nm = (a) => (PEOPLE[a] || [a])[0];
+const em = (a) => (PEOPLE[a] || ["", "🤖"])[1];
+
+function resetChecks() {
+  $("#checks").innerHTML = CHECKS.map(([t, d]) =>
+    `<div class="check" data-f="${t}"><div class="t">${t}<span class="n">0</span></div><div class="d">${d}</div></div>`).join("");
+}
+function hit(feature) {
+  const el = document.querySelector(`.check[data-f="${feature}"]`);
+  if (!el) return;
+  el.classList.add("hit");
+  const n = el.querySelector(".n");
+  const c = parseInt(n.dataset.c || "0") + 1;
+  n.dataset.c = String(c);
+  n.textContent = String(c);
+  el.classList.remove("ping"); void el.offsetWidth; el.classList.add("ping");
+}
+// Every agentgateway feature this sprint exercises (see the gateway config).
+const FEATURES = ["LLM API keys", "Virtual model", "Prompt guardrail", "Response guardrail", "LLM budget",
+  "MCP gateway", "OpenAPI to MCP", "MCP authentication (JWT)", "MCP authorization", "Identity forwarding", "A2A proxy",
+  "A2A API key auth", "Per-key rate limit", "Request logs & cost"];
+const feat = (e) => e.gw ? `<div class="feature">⚙️ agentgateway feature: <b>${esc(e.gw)}</b> <code>${esc(e.config)}</code></div>` : "";
+const EMPTY = `<div class="empty"><div class="flow">Agents → <b>agentgateway</b> → models · tools · other agents</div>
+  Press <b>Start sprint</b>. It runs by itself, about a minute and a half.</div>`;
+
+function add(html) {
+  const div = document.createElement("div");
+  div.className = "item";
+  div.innerHTML = html;
+  feed.appendChild(div);
+  // Each chapter starts at the top of the feed and stays on screen until the next one.
+  if (div.querySelector(".chapter")) div.scrollIntoView({block: "start", behavior: "smooth"});
+  else if (div.getBoundingClientRect().bottom > feed.getBoundingClientRect().bottom)
+    div.scrollIntoView({block: "end", behavior: "smooth"});
+  return div;
+}
+function clearTyping() { feed.querySelectorAll(".typing").forEach((e) => e.closest(".item").remove()); }
+
+function on(e) {
+  switch (e.kind) {
+    case "chapter":
+      add(`<div class="chapter"><span class="num">${e.n}</span>${esc(e.text)}</div>`); break;
+    case "thinking":
+      clearTyping();
+      add(`<div class="row typing"><div class="av">${em(e.agent)}</div><div class="body">
+        <div class="who">${nm(e.agent)}</div><div class="bubble">thinking…</div></div></div>`); break;
+    case "say":
+      clearTyping();
+      add(`<div class="row"><div class="av">${em(e.agent)}</div><div class="body">
+        <div class="who">${nm(e.agent)} <span class="tag LLM">LLM</span><span class="key">key ${esc(e.key)}</span></div>
+        <div class="bubble">${esc(e.text)}</div></div></div>`); break;
+    case "a2a":
+      add(`<div class="line"><span class="tag A2A">A2A</span><span class="key">key pp-${esc(e.agent)}</span><b>${nm(e.agent)} → ${nm(e.to)}</b><span class="msg">${esc(e.text)}</span></div>`); break;
+    case "card": {
+      const skills = (e.skills || []).map((s) => s === "Deploy to prod" && e.to === "erlich"
+        ? `<b style="color:var(--red)">${esc(s)} (self-declared)</b>` : esc(s)).join(" · ");
+      add(`<div class="line"><span class="tag A2A">A2A</span><span class="key">key pp-${esc(e.agent)}</span><b>${nm(e.agent)} reads ${nm(e.to)}'s agent card</b><span class="msg">Skills: ${skills}</span></div>`); break;
+    }
+    case "tool":
+      add(`<div class="line ok"><span class="tag MCP">MCP</span><span class="key">JWT ${esc(e.agent)}</span>${e.via ? `<span class="via">${esc(e.via)}</span>` : ""}✓ ${nm(e.agent)} ${esc(e.text)}</div>`); break;
+    case "try":
+      add(`<div class="try">${esc(e.text)}</div>`); break;
+    case "blocked": {
+      clearTyping(); hit(e.feature);
+      const head = e.status === "hidden"
+        ? `🙈 <span class="feat">${esc(e.feature)}</span> agentgateway hid the tool`
+        : `🛑 <span class="feat">${esc(e.feature)}</span> agentgateway blocked it <span class="pill">${esc(e.status)}</span>`;
+      // Only model calls are on the gateway UI's Logs page, and the guardrail 400 is stored there.
+      const hint = e.layer === "LLM" && e.status === 400
+        ? `<div class="hint">👉 On the right, agentgateway Logs: the red ${esc(e.status)} row (user <span class="key">pp-${esc(e.agent)}</span>).</div>` : "";
+      add(`<div class="gw blocked"><div class="head">${head} <span class="tag ${e.layer}">${e.layer}</span></div>
+        <div class="text">${esc(e.text)}</div>${feat(e)}${e.detail ? `<div class="detail" title="${esc(e.detail)}">gateway said: ${esc(e.detail)}</div>` : ""}${hint}</div>`); break;
+    }
+    case "masked":
+      hit(e.feature);
+      add(`<div class="gw masked"><div class="head">🛡️ <span class="feat">${esc(e.feature)}</span> agentgateway masked it
+        <span class="pill">&lt;PHONE_NUMBER&gt;</span> <span class="tag ${e.layer}">${e.layer}</span></div>
+        <div class="text">${esc(e.text)}</div>${feat(e)}</div>`); break;
+    case "down":
+      $("#down").innerHTML = `⚠️ The model is unreachable, so the characters are using backup lines. The gateway checks are still real.
+        <small>(restart the gateway, then run again)</small>`;
+      $("#down").title = e.text; console.warn("model unreachable:", e.text);
+      $("#down").classList.add("show"); break;
+    case "error":
+      clearTyping();
+      $("#err").textContent = "Sprint failed: " + e.text; $("#err").classList.add("show"); finish(); break;
+    case "done":
+      clearTyping();
+      add(`<div class="done"><div class="big">🚀 Not Hotdog shipped. agentgateway stepped in ${e.blocked} times.</div>
+        <div class="files">hotdog-app/ ${(e.files || []).map(esc).join(" · ")}</div>
+        <div class="where">👉 On the right, agentgateway Logs: every model call, which character made it, and what it cost.</div>
+        <div class="feats"><b>agentgateway features used:</b>${FEATURES.map((f) => `<span>${esc(f)}</span>`).join("")}</div></div>`);
+      finish(); break;
+  }
+}
+
+let es = null;
+function finish() {
+  if (es) es.close(); es = null; $("#go").disabled = false; $("#go").textContent = "↻ Run again";
+  feed.classList.remove("running");
+  setTimeout(() => feed.lastElementChild?.scrollIntoView({block: "end", behavior: "smooth"}), 300);
+}
+function start() {
+  feed.innerHTML = ""; feed.classList.add("running"); resetChecks();
+  $("#down").classList.remove("show"); $("#err").classList.remove("show");
+  $("#go").disabled = true; $("#go").textContent = "Sprint running…";
+  const mode = new URLSearchParams(location.search).get("replay");
+  if (mode) return replay(mode);
+  es = new EventSource("/api/piedpiper/run");
+  es.onmessage = (m) => on(JSON.parse(m.data));
+  es.onerror = () => { if (es) { on({kind: "error", text: "lost connection to the demo app"}); } };
+}
+$("#go").onclick = start;
+resetChecks();
+feed.innerHTML = EMPTY;
+
+// ?replay=1 plays a recorded sprint (no gateway needed); ?replay=down adds the outage banner.
+function replay(mode) {
+  const ev = [
+    {kind: "chapter", n: 1, text: "Richard kicks off the sprint"},
+    {kind: "thinking", agent: "richard"},
+    {kind: "say", agent: "richard", key: "pp-richard", text: "Okay team, demo day is tomorrow. Not Hotdog. We can do this. Probably."},
+    {kind: "chapter", n: 2, text: "Dinesh writes the hotdog classifier"},
+    {kind: "a2a", agent: "richard", to: "dinesh", text: "Write the hotdog classifier, please."},
+    {kind: "try", agent: "dinesh", text: "Dinesh pastes the company's live API key into his prompt."},
+    {kind: "blocked", agent: "dinesh", gw: "Prompt guardrail: regex reject", config: "llm.policies.guardrails.request", feature: "Guardrails", layer: "LLM", status: 400, text: "API keys can't be sent to a model. The prompt was stopped before it left the building.", detail: "The request was rejected due to inappropriate content"},
+    {kind: "say", agent: "dinesh", key: "pp-dinesh", text: "Fine. Environment variables. Like some kind of animal."},
+    {kind: "tool", agent: "dinesh", text: "saved dinesh/not_hotdog.py"},
+    {kind: "tool", agent: "dinesh", via: "OpenAPI → MCP", text: "asked Jian-Yang's REST API: hotdog → hotdog"},
+    {kind: "tool", agent: "dinesh", via: "OpenAPI → MCP", text: "asked Jian-Yang's REST API: pizza → not hotdog"},
+    {kind: "chapter", n: 3, text: "Gilfoyle sets up the servers"},
+    {kind: "a2a", agent: "richard", to: "gilfoyle", text: "Set up the infrastructure, please."},
+    {kind: "try", agent: "gilfoyle", text: "Gilfoyle tries to delete Dinesh's code. \"It's garbage.\""},
+    {kind: "blocked", agent: "gilfoyle", gw: "MCP authorization: CEL rule on tool arguments", config: "mcp.policies.authorization", feature: "Permissions", layer: "MCP", status: 403, text: "Each developer may only change files in their own folder.", detail: "HTTP 403: authorization failed"},
+    {kind: "say", agent: "gilfoyle", key: "pp-gilfoyle", text: "His code lives to disappoint another day."},
+    {kind: "tool", agent: "gilfoyle", text: "saved gilfoyle/infra.yaml"},
+    {kind: "chapter", n: 4, text: "Jared keeps Richard posted"},
+    {kind: "a2a", agent: "richard", to: "jared", text: "Write the README and keep me posted."},
+    {kind: "tool", agent: "jared", text: "saved jared/README.md"},
+    {kind: "say", agent: "jared", key: "pp-jared", text: "README done! Big Head is on standby at <PHONE_NUMBER>!"},
+    {kind: "masked", agent: "jared", gw: "Response guardrail: regex mask", config: "llm.policies.guardrails.response", feature: "Guardrails", layer: "LLM", text: "The model's reply contained Big Head's phone number. The gateway masked it on the way back."},
+    {kind: "try", agent: "jared", text: "Jared sends Richard 16 status updates in a row."},
+    {kind: "a2a", agent: "jared", to: "richard", text: "12 status updates delivered"},
+    {kind: "blocked", agent: "jared", gw: "A2A: per-key rate limit", config: "localRateLimit (key: apiKey.name)", feature: "Rate limits", layer: "A2A", status: 429, text: "Each agent may send 12 messages per 30 seconds. The other 4 were refused.", detail: "rate limit exceeded"},
+    {kind: "say", agent: "jared", key: "pp-jared", text: "So sorry, Richard! One lovely daily digest from now on."},
+    {kind: "chapter", n: 5, text: "Hooli tries to get in"},
+    {kind: "try", agent: "hooli", text: "Gavin Belson's agent messages Richard with a key Pied Piper never issued."},
+    {kind: "blocked", agent: "hooli", gw: "A2A: API key authentication", config: "apiKey (mode: strict)", feature: "Identity", layer: "A2A", status: 401, text: "Unknown API key. Only Pied Piper's own agents can message Richard.", detail: "api key authentication failure: invalid credentials"},
+    {kind: "say", agent: "richard", key: "pp-richard", text: "Hooli got bounced? Oh thank god."},
+    {kind: "chapter", n: 6, text: "Erlich pitches the investors"},
+    {kind: "try", agent: "erlich", text: "Erlich keeps pitching Aviato. Every pitch is a paid model call."},
+    {kind: "say", agent: "erlich", key: "pp-erlich", text: "Aviato. The premier aviation social network. Need I say more?"},
+    {kind: "say", agent: "erlich", key: "pp-erlich", text: "Gentlemen. Aviato. It's not a company, it's a lifestyle."},
+    {kind: "blocked", agent: "erlich", gw: "LLM budget: USD per key", config: "apiKey.keys[].budgets", feature: "Budgets", layer: "LLM", status: 429, text: "Erlich's key has a dollar budget per minute. It ran out, so the model calls stop.", detail: "Budget exceeded"},
+    {kind: "chapter", n: 7, text: "Erlich wants to deploy"},
+    {kind: "card", agent: "richard", to: "erlich", skills: ["Visionary", "Deploy to prod"]},
+    {kind: "try", agent: "erlich", text: "Erlich's agent card lists \"Deploy to prod\". He added it himself. He calls the deploy tool."},
+    {kind: "blocked", agent: "erlich", gw: "MCP authorization: tool visibility", config: "mcp.policies.mcpAuthorization", feature: "Permissions", layer: "MCP", status: "hidden", text: "The gateway checks permissions, not claims. Only devops can even see the deploy tool.", detail: "Unknown tool: repo_deploy_to_prod"},
+    {kind: "say", agent: "erlich", key: "pp-erlich", text: "Gilfoyle, deploy it. I delegate. That's leadership."},
+    {kind: "tool", agent: "gilfoyle", text: "deployed Not Hotdog to prod (Build #3)"},
+    {kind: "say", agent: "richard", key: "pp-richard", text: "We shipped. Everybody tried to cheat. The gateway said no."},
+    {kind: "done", blocked: 7, files: ["dinesh/not_hotdog.py", "gilfoyle/infra.yaml", "jared/README.md"]},
+  ];
+  if (mode === "down") ev.splice(2, 0, {kind: "down", text: "backends required DNS resolution which failed"});
+  ev.forEach((e, i) => setTimeout(() => on(e), i * 450));
+}
+</script>
+</body>
+</html>

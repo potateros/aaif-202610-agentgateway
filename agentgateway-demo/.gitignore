@@ -1,0 +1,10 @@
+config.yaml
+.env
+keys/*.jwt
+keys/jwks.json
+keys/private.pem
+__pycache__/
+
+# Pied Piper fake repo: contents are generated at demo time
+hotdog-app/*
+!hotdog-app/.gitkeep

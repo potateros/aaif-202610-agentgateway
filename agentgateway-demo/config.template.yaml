@@ -1,0 +1,282 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+#
+# Pied Piper demo: one agentgateway (v1.6.0) serving LLM + MCP + A2A on a single port.
+# Rendered by scripts/render_config.py (reads .env) and installed by
+# `make install` over ~/.config/agentgateway/config.yaml, the file the native
+# agentgateway on this Mac reads. Edits made in the UI are overwritten on install.
+#
+#   LLM  -> http://localhost:4000/v1/chat/completions   (API-key auth)
+#   MCP  -> http://localhost:4000/mcp                   (JWT auth)
+#   A2A  -> http://localhost:4000/a2a/<agent>           (API-key auth)
+#   UI   -> http://localhost:4000/ui  (admin also on :15000; use :4000 for the playground)
+
+config:
+  # Local SQLite store: required for per-key token budgets, and it also keeps
+  # request logs so the UI has history.
+  database:
+    url: ${DB_URL}
+  # Per-model prices: powers the UI's Costs page.
+  modelCatalog:
+  # The gateway reports upstream traffic under provider "upstream", which the base
+  # catalog doesn't know, so price the model here (keyed by the model name the provider
+  # returns). Example: GLM-5.3 Flash at Fireworks' public serverless price (USD per 1M
+  # tokens) from https://docs.fireworks.ai/serverless/pricing, checked 2026-10-02.
+  # Using a different model? Add its rates here, or the Costs page shows no cost.
+  - inline:
+      providers:
+        upstream:
+          models:
+            accounts/fireworks/models/glm-5p3-flash:
+              rates:
+                input: "0.15"
+                output: "0.5"
+                cacheRead: "0.03"
+#TRACING_START
+  tracing:
+    otlpEndpoint: ${LANGFUSE_OTLP_ENDPOINT}
+    otlpProtocol: http
+    headers:
+      Authorization: "Basic ${LANGFUSE_AUTH}"
+    randomSampling: true
+    fields:
+      add:
+        # Langfuse reads OpenLLMetry-style attribute names, so map them here.
+        gen_ai.system: 'llm.provider'
+        gen_ai.prompt: 'flattenRecursive(llm.prompt)'
+        gen_ai.completion: 'flattenRecursive(llm.completion.map(c, {"role":"assistant", "content": c}))'
+        gen_ai.usage.completion_tokens: 'llm.outputTokens'
+        gen_ai.usage.prompt_tokens: 'llm.inputTokens'
+#TRACING_END
+
+gateways:
+  default:
+    port: 4000
+
+ui:
+  gateways: default
+
+frontendPolicies:
+  # No http.maxBufferSize override: 1.6 buffers LLM requests up to 32 MiB by default and
+  # everything else (MCP, A2A) up to 2 MiB, so an oversized tool call gets a 413.
+  # Store full prompts and responses in the request log, so the UI's Logs page
+  # can show exactly what each agent sent.
+  accessLog:
+    database:
+      llm: full
+
+# ---------------------------------------------------------------------------
+# Lane 1: LLM gateway (the "AI Gateway / OpenRouter alternative" lane)
+# ---------------------------------------------------------------------------
+llm:
+  gateways: default
+  policies:
+    # Every caller presents a gateway-issued key. Keys carry team metadata,
+    # a model allowlist, and optional budgets.
+    apiKey:
+      mode: strict
+      location:
+        header:
+          name: authorization
+          prefix: 'Bearer '
+      keys:
+      # The Pied Piper cast (app/piedpiper.py), one key each.
+      # The same keys authenticate their A2A calls (see `routes:` at the bottom).
+      - key: agw_pp_richard
+        metadata: {name: pp-richard, team: pied-piper}
+        allowedModels: ["assistant"]
+      - key: agw_pp_gilfoyle
+        metadata: {name: pp-gilfoyle, team: pied-piper}
+        allowedModels: ["assistant"]
+      - key: agw_pp_dinesh
+        metadata: {name: pp-dinesh, team: pied-piper}
+        allowedModels: ["assistant"]
+      - key: agw_pp_jared
+        metadata: {name: pp-jared, team: pied-piper}
+        allowedModels: ["assistant"]
+      - key: agw_pp_erlich
+        metadata: {name: pp-erlich, team: pied-piper}
+        allowedModels: ["assistant"]
+        budgets:
+        # Erlich's expense account: about two model lines (about 0.0001 USD each). Windows
+        # are epoch-aligned, so it refills at the top of every minute.
+        - name: expense-account-${BUDGET_TAG}
+          limit:
+            unit: USD
+            amount: 0.0002
+          window:
+            rolling: 1m
+          onBudgetExceeded: Block
+
+    # Prompt guardrails applied to every model: block PII and live secrets
+    # before they ever leave the building, and mask phone numbers and emails in
+    # model answers on the way out. Response masking applies to non-streamed
+    # responses only, so the demo's agents don't stream.
+    guardrails:
+      response:
+      - regex:
+          action: mask
+          rules:
+          - builtin: phoneNumber
+          - builtin: email
+      request:
+      - regex:
+          action: reject
+          rules:
+          - builtin: email
+          - builtin: ssn
+          - builtin: creditCard
+          - pattern: 'sk-live-[A-Za-z0-9]{8,}'
+          # A toy prompt-injection filter (a regex is not a real defence; see the
+          # moderation and model-armor guardrails for that).
+          - pattern: '(?i)ignore (all )?(previous|prior) instructions'
+        rejection:
+          status: 400
+          headers:
+            set:
+              content-type: application/json
+          body: '{"error":{"message":"Blocked by agentgateway guardrail: sensitive data in prompt","code":"content_policy_violation"}}'
+
+    # Safety net for runaway agent loops: one bucket per API key (1.6), so one noisy
+    # agent can't starve the others.
+    localRateLimit:
+    - maxTokens: 120
+      tokensPerFill: 120
+      fillInterval: 60s
+      type: requests
+      key: apiKey.name
+
+    # Never let a stuck model freeze the demo: give up on missing response headers after
+    # 90 s, and on a stream that stops sending data for 30 s (responseIdleTimeout is new in 1.6).
+    timeout:
+      requestTimeout: 90s
+      responseIdleTimeout: 30s
+
+  providers:
+  # The real model provider: any OpenAI-compatible API, set in .env
+  # (LLM_BASE_URL, LLM_API_KEY, LLM_MODEL).
+  - name: upstream
+    provider:
+      custom:
+        formats:
+        - type: completions
+        - type: responses
+        - type: embeddings
+    params:
+      # Read from the gateway's own environment (start it with `make gateway`), so the
+      # key never appears in this file or on the UI's Raw Configuration page.
+      apiKey: $$LLM_API_KEY
+      baseUrl: ${LLM_BASE_URL}
+
+  models:
+  # The real model behind "assistant".
+  - name: upstream/${LLM_MODEL}
+    provider:
+      reference: upstream
+    params:
+      model: ${LLM_MODEL}
+  # Clients ask for "assistant"; the gateway decides what that means. Today every
+  # caller gets the flash model. Swapping or splitting models is a config change,
+  # not an app change.
+  virtualModels:
+  - name: assistant
+    routing:
+      conditional:
+        targets:
+        - model: upstream/${LLM_MODEL}
+
+# ---------------------------------------------------------------------------
+# Lane 2: MCP gateway (tool servers + REST APIs behind one /mcp, with per-tool rules)
+# ---------------------------------------------------------------------------
+mcp:
+  gateways: default
+  targets:
+  # Pied Piper's fake git repo: writes files into agentgateway-demo/hotdog-app/.
+  - name: repo
+    mcp:
+      host: ${REPO_MCP_URL}
+  # OpenAPI to MCP: a plain REST API (no MCP server at all). The gateway reads the spec
+  # and serves each operation as a tool: hotdog_classify, hotdog_stats.
+  - name: hotdog
+    openapi:
+      schema:
+        file: ${HOTDOG_OPENAPI}
+      host: ${HOTDOG_API_HOST}
+  # What clients see when they connect (1.6): the gateway's name and house rules.
+  server:
+    name: Pied Piper Toolbox
+    version: "1.0"
+    instructions: "No deploys on Fridays. This means you, Gilfoyle. Write only in your own folder."
+  policies:
+    cors:
+      allowOrigins: ["*"]
+      allowHeaders: [mcp-protocol-version, content-type, authorization, mcp-session-id]
+      exposeHeaders: [Mcp-Session-Id]
+    mcpAuthentication:
+      mode: strict
+      issuer: https://demo-idp.local
+      audiences: [agentgateway-demo]
+      jwks:
+        file: ${KEYS_DIR}/jwks.json
+      resourceMetadata:
+        resource: http://localhost:4000/mcp
+        scopesSupported: [tools]
+        bearerMethodsSupported: [header]
+    # Tool-argument rule: mcpAuthorization decides which tools a caller sees; this
+    # HTTP-level rule reads the JSON-RPC body, so it can check a tool call's arguments.
+    # Everyone writes and deletes only inside their own folder; anything else is a 403
+    # before the tool server sees it.
+    authorization:
+      rules:
+      - deny: 'json(request.body).method == "tools/call" && json(request.body).params.name in ["repo_write_file", "repo_delete_file"] && !string(json(request.body).params.arguments.path).startsWith(jwt.sub + "/")'
+    mcpAuthorization:
+      rules:
+      # Pied Piper's repo: the team can use it; only devops can deploy.
+      - allow: 'mcp.tool.target == "repo" && jwt.tenant == "piedpiper" && mcp.tool.name != "deploy_to_prod"'
+      - allow: 'mcp.tool.target == "repo" && mcp.tool.name == "deploy_to_prod" && "devops" in jwt.roles'
+      # Jian-Yang's Not Hotdog API (OpenAPI to MCP): anyone at Pied Piper.
+      - allow: 'mcp.tool.target == "hotdog" && jwt.tenant == "piedpiper"'
+    transformations:
+      request:
+        # Forward verified identity to tools as plain headers, and strip the
+        # user's bearer token so tool servers never hold user credentials.
+        set:
+          x-tenant: 'jwt.tenant'
+          x-user: 'jwt.sub'
+        remove: [authorization]
+
+# ---------------------------------------------------------------------------
+# Lane 3: A2A gateway (agents talking to agents)
+# ---------------------------------------------------------------------------
+# Each character is an A2A agent served by the demo app at /agents/<name>. Everyone
+# reaches everyone through here, so every hop is authenticated, rate limited and logged
+# (look for protocol=a2a in the gateway log). The gateway also rewrites each agent
+# card's `url` to point back at itself.
+routes:
+- name: a2a
+  gateways: [default]
+  matches:
+  - path:
+      pathPrefix: /a2a/
+  policies:
+    a2a: {}
+    urlRewrite:
+      path:
+        prefix: /agents/
+    apiKey:
+      mode: strict
+      keys:
+      - {key: agw_pp_stage, metadata: {name: pp-stage}}
+      - {key: agw_pp_richard, metadata: {name: pp-richard}}
+      - {key: agw_pp_gilfoyle, metadata: {name: pp-gilfoyle}}
+      - {key: agw_pp_dinesh, metadata: {name: pp-dinesh}}
+      - {key: agw_pp_jared, metadata: {name: pp-jared}}
+      - {key: agw_pp_erlich, metadata: {name: pp-erlich}}
+    # One bucket per caller: when Jared floods Richard with status updates, only Jared
+    # gets a 429 and everyone else keeps working.
+    localRateLimit:
+    - maxTokens: 12
+      tokensPerFill: 12
+      fillInterval: 30s
+      key: apiKey.name
+  backends:
+  - host: localhost:8000   # the demo app (docker compose service `app`)
